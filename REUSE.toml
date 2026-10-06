@@ -1,0 +1,6 @@
+version = 1
+
+[[annotations]]
+path = ["package.json", "package-lock.json"]
+SPDX-FileCopyrightText = "2026 Kaito Udagawa <umireon@kaito.tokyo>"
+SPDX-License-Identifier = "Apache-2.0"
