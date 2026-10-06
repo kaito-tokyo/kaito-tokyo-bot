@@ -17,7 +17,7 @@ export function evaluateDeploymentProtectionRule(environment, senderId) {
 	};
 
 	switch (environment) {
-		case "apple-deployment":
+		case "apple-development":
 			if (senderId === knownSenderIds.umireon) {
 				return true;
 			} else {
