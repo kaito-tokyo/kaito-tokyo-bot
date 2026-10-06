@@ -39,7 +39,7 @@ export class GitHubClient {
 	 * @param {typeof globalThis.fetch} _fetch - The fetch implementation used for API requests.
 	 */
 	constructor(_fetch = globalThis.fetch) {
-		this.#fetch = _fetch;
+		this.#fetch = _fetch.bind(globalThis);
 	}
 
 	/**

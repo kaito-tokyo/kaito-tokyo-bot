@@ -120,7 +120,8 @@ test("Worker fetch registers the background task and returns the response", { ti
 	let releaseToken;
 	const tokenResponse = new Promise((resolve) => { releaseToken = resolve; });
 	let reviewed = false;
-	t.mock.method(globalThis, "fetch", async (url, options) => {
+	t.mock.method(globalThis, "fetch", async function (url, options) {
+		assert.ok(this === globalThis, "fetch must receive globalThis as its receiver");
 		if (url === "https://api.github.com/app/installations/1/access_tokens") {
 			return tokenResponse;
 		}
