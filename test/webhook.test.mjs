@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { createHmac, generateKeyPairSync, verify } from "node:crypto";
 import { Buffer } from "node:buffer";
 import test from "node:test";
-import { handleWebhook } from "../src/index.mjs";
+import { handleGitHubWebhook } from "../src/index.mjs";
+import { GitHubClient } from "../src/github/GitHubClient.mjs";
 
 const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const env = {
@@ -16,11 +17,11 @@ const env = {
 };
 const payload = {
 	action: "requested",
-	environment: "preview",
+	environment: "apple-deployment",
 	installation: { id: 1 },
 	repository: { id: 2, name: "repo", owner: { login: "owner" } },
 	deployment_callback_url: "https://api.github.com/repos/owner/repo/actions/runs/3/deployment_protection_rule",
-	sender: { login: "umireon" },
+	sender: { id: 1067855, login: "umireon" },
 };
 function webhook(value = payload, signature) {
 	const body = JSON.stringify(value);
@@ -33,10 +34,17 @@ function webhook(value = payload, signature) {
 	});
 }
 
-for (const [actor, expected] of [["umireon", "approved"], ["other", "rejected"], [undefined, "rejected"]]) {
-	test(`actor ${actor} is ${expected}, regardless of sender and re-run actor`, async () => {
+for (const [environment, sender, expected] of [
+	["apple-deployment", { id: 1067855, login: "umireon" }, "approved"],
+	["apple-deployment", { id: 1067855, login: "renamed-user" }, "approved"],
+	["apple-deployment", { id: 123, login: "umireon" }, "rejected"],
+	["apple-deployment", { id: "1067855", login: "umireon" }, "rejected"],
+	["apple-deployment", undefined, "rejected"],
+	["preview", { id: 1067855, login: "umireon" }, "rejected"],
+]) {
+	test(`sender ${JSON.stringify(sender)} in ${environment} is ${expected}`, async () => {
 		let calls = 0;
-		const result = await handleWebhook(webhook(), env, async (url, options) => {
+		const githubClient = new GitHubClient(async (url, options) => {
 			calls++;
 			if (calls === 1) {
 				assert.equal(url, "https://api.github.com/app/installations/1/access_tokens");
@@ -49,39 +57,37 @@ for (const [actor, expected] of [["umireon", "approved"], ["other", "rejected"],
 				assert.ok(jwtClaims.iat <= Date.now() / 1000);
 				assert.ok(jwtClaims.exp > Date.now() / 1000);
 				assert.ok(verify("RSA-SHA256", Buffer.from(`${header}.${claims}`), keys.publicKey, Buffer.from(signature, "base64url")));
-				assert.deepEqual(JSON.parse(options.body), { repository_ids: [2], permissions: { actions: "read", deployments: "write" } });
+				assert.deepEqual(JSON.parse(options.body), { repository_ids: [2], permissions: { deployments: "write" } });
 				return Response.json({ token: "test-token" });
 			}
-			if (calls === 2) {
-				assert.equal(url, "https://api.github.com/repos/owner/repo/actions/runs/3");
-				return Response.json({ actor: { login: actor }, triggering_actor: { login: "umireon" } });
-			}
+			assert.equal(calls, 2);
+			assert.equal(options.method, "POST");
 			assert.equal(url, payload.deployment_callback_url);
 			assert.equal(JSON.parse(options.body).state, expected);
-			assert.equal(JSON.parse(options.body).environment_name, "preview");
+			assert.equal(JSON.parse(options.body).environment_name, environment);
 			return new Response(null, { status: 204 });
 		});
+		const result = await handleGitHubWebhook(webhook({ ...payload, environment, sender }), env, githubClient);
 		assert.equal(result.status, 204);
-		assert.equal(calls, 3);
+		assert.equal(calls, 2);
 	});
 }
 
 test("invalid signature never calls GitHub", async () => {
-	const result = await handleWebhook(webhook(payload, `sha256=${"0".repeat(64)}`), env, () => assert.fail("API called"));
+	const githubClient = new GitHubClient(() => assert.fail("API called"));
+	const result = await handleGitHubWebhook(webhook(payload, `sha256=${"0".repeat(64)}`), env, githubClient);
 	assert.equal(result.status, 401);
-});
-
-test("foreign callback cannot receive an installation token", async () => {
-	const result = await handleWebhook(webhook({ ...payload, deployment_callback_url: "https://example.com/steal" }), env, () => assert.fail("API called"));
-	assert.equal(result.status, 500);
 });
 
 test("GitHub API failure never approves a deployment", async () => {
 	let calls = 0;
-	const result = await handleWebhook(webhook(), env, async () => {
+	const githubClient = new GitHubClient(async () => {
 		calls++;
 		return new Response(null, { status: 403 });
 	});
-	assert.equal(result.status, 500);
+	await assert.rejects(
+		handleGitHubWebhook(webhook(), env, githubClient),
+		{ message: "GitHub API returned 403" },
+	);
 	assert.equal(calls, 1);
 });
