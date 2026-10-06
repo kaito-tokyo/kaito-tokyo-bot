@@ -13,6 +13,9 @@ export default defineConfig({
 		compatibilityFlags: ["nodejs_compat"],
 		domains: ["bot.kaito.tokyo"],
 		workersDev: false,
+		observability: {
+			enabled: true,
+		},
 		env: {
 			GITHUB_APP_ID: bindings.secret(),
 			GITHUB_CLIENT_ID: bindings.secret(),
