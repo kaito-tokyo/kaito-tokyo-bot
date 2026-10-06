@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createHmac, generateKeyPairSync, verify } from "node:crypto";
 import { Buffer } from "node:buffer";
 import test from "node:test";
-import { handleGitHubWebhook } from "../src/index.mjs";
+import worker, { handleGitHubWebhook } from "../src/index.mjs";
 import { GitHubClient } from "../src/github/GitHubClient.mjs";
 
 const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -67,16 +67,18 @@ for (const [environment, sender, expected] of [
 			assert.equal(JSON.parse(options.body).environment_name, environment);
 			return new Response(null, { status: 204 });
 		});
-		const result = await handleGitHubWebhook(webhook({ ...payload, environment, sender }), env, githubClient);
-		assert.equal(result.status, 204);
+		const { response, waitUntil } = await handleGitHubWebhook(webhook({ ...payload, environment, sender }), env, githubClient);
+		assert.equal(response.status, 204);
+		await waitUntil;
 		assert.equal(calls, 2);
 	});
 }
 
 test("invalid signature never calls GitHub", async () => {
 	const githubClient = new GitHubClient(() => assert.fail("API called"));
-	const result = await handleGitHubWebhook(webhook(payload, `sha256=${"0".repeat(64)}`), env, githubClient);
-	assert.equal(result.status, 401);
+	const { response, waitUntil } = await handleGitHubWebhook(webhook(payload, `sha256=${"0".repeat(64)}`), env, githubClient);
+	assert.equal(response.status, 401);
+	await waitUntil;
 });
 
 test("GitHub API failure never approves a deployment", async () => {
@@ -85,9 +87,54 @@ test("GitHub API failure never approves a deployment", async () => {
 		calls++;
 		return new Response(null, { status: 403 });
 	});
-	await assert.rejects(
-		handleGitHubWebhook(webhook(), env, githubClient),
-		{ message: "GitHub API returned 403" },
-	);
+	const { response, waitUntil } = await handleGitHubWebhook(webhook(), env, githubClient);
+	assert.equal(response.status, 204);
+	await assert.rejects(waitUntil, { message: "GitHub API returned 403" });
 	assert.equal(calls, 1);
+});
+
+test("responds before token acquisition and sends the decision in the background", { timeout: 2000 }, async () => {
+	let releaseToken;
+	const token = new Promise((resolve) => { releaseToken = resolve; });
+	let reviewed = false;
+	const githubClient = {
+		createInstallationAccessToken: () => token,
+		async reviewDeploymentProtectionRule(url, installationToken, review) {
+			assert.equal(url, payload.deployment_callback_url);
+			assert.equal(installationToken, "test-token");
+			assert.equal(review.state, "approved");
+			reviewed = true;
+		},
+	};
+	const { response, waitUntil } = await handleGitHubWebhook(webhook(), env, githubClient);
+	assert.equal(response.status, 204);
+	assert.equal(reviewed, false);
+	releaseToken("test-token");
+	await waitUntil;
+	assert.equal(reviewed, true);
+});
+
+test("Worker fetch registers the background task and returns the response", { timeout: 2000 }, async (t) => {
+	const tasks = [];
+	const ctx = { waitUntil: (task) => tasks.push(task) };
+	let releaseToken;
+	const tokenResponse = new Promise((resolve) => { releaseToken = resolve; });
+	let reviewed = false;
+	t.mock.method(globalThis, "fetch", async (url, options) => {
+		if (url === "https://api.github.com/app/installations/1/access_tokens") {
+			return tokenResponse;
+		}
+		assert.equal(url, payload.deployment_callback_url);
+		assert.equal(JSON.parse(options.body).state, "approved");
+		reviewed = true;
+		return new Response(null, { status: 204 });
+	});
+
+	const response = await worker.fetch(webhook(), env, ctx);
+	assert.equal(response.status, 204);
+	assert.equal(tasks.length, 1);
+	assert.equal(reviewed, false);
+	releaseToken(Response.json({ token: "test-token" }));
+	await Promise.all(tasks);
+	assert.equal(reviewed, true);
 });
