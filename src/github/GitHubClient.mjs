@@ -52,7 +52,7 @@ export class GitHubClient {
 	async createInstallationAccessToken(appToken, { installationId, repositoryIds, permissions }) {
 		const response = await this.#fetch(`${this.#apiBase}/app/installations/${installationId}/access_tokens`, {
 			method: "POST",
-			redirect: "error",
+			redirect: "manual",
 			signal: AbortSignal.timeout(8000),
 			headers: {
 				...this.#headers,
@@ -78,7 +78,7 @@ export class GitHubClient {
 		const callback = new URL(callbackUrl);
 		const response = await this.#fetch(`${this.#apiBase}${callback.pathname}`, {
 			method: "POST",
-			redirect: "error",
+			redirect: "manual",
 			signal: AbortSignal.timeout(8000),
 			headers: {
 				...this.#headers,
