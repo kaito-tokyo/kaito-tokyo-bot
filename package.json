@@ -4,8 +4,8 @@
 	"private": true,
 	"type": "module",
 	"allowScripts": {
-		"esbuild": true,
-		"workerd": true,
+		"esbuild@0.28.2": true,
+		"workerd@1.20261019.1": true,
 		"fsevents": false
 	},
 	"scripts": {
