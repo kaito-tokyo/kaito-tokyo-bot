@@ -9,6 +9,7 @@ import { createGitHubAppToken } from "./github/app-token.mjs";
 import { GitHubClient } from "./github/GitHubClient.mjs";
 import { verifySignature } from "./github/webhook.mjs";
 import { evaluateDeploymentProtectionRule } from "./rules.mjs";
+import { handleChecklist } from "./checklist.mjs";
 
 /**
  * A webhook response and the work to continue after responding.
@@ -125,6 +126,12 @@ export async function handleGitHubWebhook(request, env, githubClient) {
 	} else if (event === "deployment_protection_rule") {
 		console.info("Received deployment protection rule event");
 		return await handleDeploymentProtectionRule(body, env, githubClient);
+	} else if (event === "pull_request") {
+		const payload = parseJSON(body);
+		if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+			return { response: new Response("Bad Request", { status: 400 }) };
+		}
+		return handleChecklist(payload, env, githubClient, createGitHubAppToken);
 	} else {
 		console.info("Ignoring unsupported event");
 		return { response: new Response(null, { status: 204 }), waitUntil: Promise.resolve() };

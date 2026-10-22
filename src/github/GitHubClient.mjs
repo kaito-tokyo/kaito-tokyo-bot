@@ -42,6 +42,33 @@ export class GitHubClient {
 		this.#fetch = _fetch.bind(globalThis);
 	}
 
+	/** Reads the current PR body and head, rather than replaying webhook state. */
+	async getPullRequest(repository, number, token) {
+		const response = await this.#fetch(`${this.#apiBase}/repos/${repository}/pulls/${number}`, {
+			redirect: "manual",
+			signal: AbortSignal.timeout(8000),
+			headers: { ...this.#headers, Authorization: `Bearer ${token}` },
+		});
+		if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
+		return response.json();
+	}
+
+	/** Publishes the mechanical checklist result as a commit status. */
+	async setChecklistStatus(repository, sha, token, approved) {
+		const response = await this.#fetch(`${this.#apiBase}/repos/${repository}/statuses/${sha}`, {
+			method: "POST",
+			redirect: "manual",
+			signal: AbortSignal.timeout(8000),
+			headers: { ...this.#headers, Authorization: `Bearer ${token}` },
+			body: JSON.stringify({
+				context: "checklist",
+				state: approved ? "success" : "failure",
+				description: approved ? "All required checklist lines are present." : "Required checklist lines are missing or unchecked.",
+			}),
+		});
+		if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
+	}
+
 	/**
 	 * Creates an installation access token scoped to the requested repositories and permissions.
 	 *

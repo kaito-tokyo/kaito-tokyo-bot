@@ -3,6 +3,11 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
+	"allowScripts": {
+		"esbuild": true,
+		"workerd": true,
+		"fsevents": false
+	},
 	"scripts": {
 		"dev": "cf dev",
 		"build": "cf build",
