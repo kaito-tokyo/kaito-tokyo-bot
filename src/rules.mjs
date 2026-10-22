@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Allows umireon to deploy to apple-deployment and rejects all other cases.
+ * Allows umireon to deploy to apple-development and rejects all other cases.
  *
  * @param {string} environment - The target GitHub Environment name.
  * @param {number | undefined} senderId - The sender's GitHub user ID from the authenticated webhook payload.

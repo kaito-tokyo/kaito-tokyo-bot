@@ -17,7 +17,7 @@ const env = {
 };
 const payload = {
 	action: "requested",
-	environment: "apple-deployment",
+	environment: "apple-development",
 	installation: { id: 1 },
 	repository: { id: 2, name: "repo", owner: { login: "owner" } },
 	deployment_callback_url: "https://api.github.com/repos/owner/repo/actions/runs/3/deployment_protection_rule",
@@ -35,11 +35,12 @@ function webhook(value = payload, signature) {
 }
 
 for (const [environment, sender, expected] of [
-	["apple-deployment", { id: 1067855, login: "umireon" }, "approved"],
-	["apple-deployment", { id: 1067855, login: "renamed-user" }, "approved"],
-	["apple-deployment", { id: 123, login: "umireon" }, "rejected"],
-	["apple-deployment", { id: "1067855", login: "umireon" }, "rejected"],
-	["apple-deployment", undefined, "rejected"],
+	["apple-development", { id: 1067855, login: "umireon" }, "approved"],
+	["apple-development", { id: 1067855, login: "renamed-user" }, "approved"],
+	["apple-development", { id: 123, login: "umireon" }, "rejected"],
+	["apple-development", { id: "1067855", login: "umireon" }, "rejected"],
+	["apple-development", undefined, "rejected"],
+	["apple-deployment", { id: 1067855, login: "umireon" }, "rejected"],
 	["preview", { id: 1067855, login: "umireon" }, "rejected"],
 ]) {
 	test(`sender ${JSON.stringify(sender)} in ${environment} is ${expected}`, async () => {
