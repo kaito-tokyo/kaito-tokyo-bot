@@ -10,7 +10,6 @@ import { GitHubClient } from "./github/GitHubClient.mjs";
 import { verifySignature } from "./github/webhook.mjs";
 import { evaluateDeploymentProtectionRule } from "./rules.mjs";
 import { handleChecklist } from "./checklist.mjs";
-export { ChecklistJobs } from "./ChecklistJobs.mjs";
 
 /**
  * A webhook response and the work to continue after responding.
@@ -132,7 +131,7 @@ export async function handleGitHubWebhook(request, env, githubClient) {
 		if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
 			return { response: new Response("Bad Request", { status: 400 }) };
 		}
-		return handleChecklist(payload, env);
+		return handleChecklist(payload, env, githubClient, createGitHubAppToken);
 	} else {
 		console.info("Ignoring unsupported event");
 		return { response: new Response(null, { status: 204 }), waitUntil: Promise.resolve() };

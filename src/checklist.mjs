@@ -18,7 +18,7 @@ export function evaluateChecklist(repository, body) {
 }
 
 /** Handles checklist events independently of deployment protection. */
-export async function handleChecklist(payload, env) {
+export async function handleChecklist(payload, env, githubClient, createAppToken) {
 	if (!["opened", "edited", "synchronize", "reopened", "ready_for_review", "closed"].includes(payload?.action)) {
 		return { response: new Response(null, { status: 204 }) };
 	}
@@ -32,19 +32,9 @@ export async function handleChecklist(payload, env) {
 	if (![installationId, repositoryId, number].every((id) => Number.isSafeInteger(id) && id > 0)) {
 		return { response: new Response("Bad Request", { status: 400 }) };
 	}
-	// Acknowledge only after both the work and its retry alarm are durable.
-	try {
-		const id = env.CHECKLIST_JOBS.idFromName(String(repositoryId));
-		const response = await env.CHECKLIST_JOBS.get(id).fetch("https://checklist/enqueue", {
-			method: "POST",
-			body: JSON.stringify({ repository, repositoryId, installationId }),
-		});
-		if (!response.ok) throw new Error(`Checklist queue returned ${response.status}`);
-		return { response: new Response(null, { status: 204 }) };
-	} catch (error) {
-		console.error("Failed to persist checklist work", error);
-		return { response: new Response("Service Unavailable", { status: 503 }) };
-	}
+	// Best-effort updates: reopening a PR triggers another attempt after failure.
+	const waitUntil = reconcileChecklists({ repository, repositoryId, installationId }, env, githubClient, createAppToken);
+	return { response: new Response(null, { status: 204 }), waitUntil };
 }
 
 /** Reconciles every open PR: a shared SHA succeeds only if all its PRs pass. */

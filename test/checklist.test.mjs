@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHmac, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { evaluateChecklist, reconcileChecklists } from "../src/checklist.mjs";
+import { evaluateChecklist, handleChecklist, reconcileChecklists } from "../src/checklist.mjs";
 import { handleGitHubWebhook } from "../src/index.mjs";
 import { GitHubClient } from "../src/github/GitHubClient.mjs";
 
@@ -37,7 +37,12 @@ function webhook(payload, secret, signature) {
 	});
 }
 
-const env = { GITHUB_CLIENT_ID: "client", GITHUB_PRIVATE_KEY: "unused", GITHUB_WEBHOOK_SECRET: "secret" };
+const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const env = {
+	GITHUB_CLIENT_ID: "client",
+	GITHUB_PRIVATE_KEY: keys.privateKey.export({ type: "pkcs8", format: "pem" }),
+	GITHUB_WEBHOOK_SECRET: "secret",
+};
 const payload = {
 	action: "edited", installation: { id: 1 },
 	repository: { id: 2, full_name: repository }, pull_request: { number: 382, body: "outdated" },
@@ -56,27 +61,76 @@ test("shared SHA fails if any open PR is unchecked", async () => {
 });
 
 for (const action of ["opened", "edited", "synchronize", "reopened", "ready_for_review", "closed"]) {
-	test(`authenticated ${action} durably enqueues repository reconciliation`, async () => {
+	test(`authenticated ${action} publishes current checklist status in the background`, async () => {
 		const calls = [];
-		const client = new GitHubClient(() => assert.fail("webhook must not process GitHub work"));
-		const result = await handleGitHubWebhook(webhook({ ...payload, action }, "secret"), {
-			...env,
-			CHECKLIST_JOBS: {
-				idFromName(name) { assert.equal(name, "2"); return name; },
-				get(id) {
-					assert.equal(id, "2");
-					return { async fetch(url, options) {
-						calls.push(JSON.parse(options.body));
-						return new Response(null, { status: 204 });
-					} };
-				},
+		const client = {
+			async createInstallationAccessToken(jwt, options) {
+				assert.deepEqual(options, { installationId: 1, repositoryIds: [2], permissions: { pull_requests: "read", statuses: "write" } });
+				return "token";
 			},
-		}, client);
+			async listOpenPullRequests(repo, token) {
+				assert.deepEqual([repo, token], [repository, "token"]);
+				return [{ state: "open", body, head: { sha: "a".repeat(40) } }];
+			},
+			async setChecklistStatus(...args) { calls.push(args); },
+		};
+		const result = await handleGitHubWebhook(webhook({ ...payload, action }, "secret"), env, client);
 		assert.equal(result.response.status, 204);
 		await result.waitUntil;
-		assert.deepEqual(calls, [{ repository, repositoryId: 2, installationId: 1 }]);
+		assert.deepEqual(calls, [[repository, "a".repeat(40), "token", true]]);
 	});
 }
+
+test("responds before GitHub finishes; close-open retries a failed update", async () => {
+	let release;
+	const token = new Promise((resolve) => { release = resolve; });
+	let fail = true;
+	let writes = 0;
+	let pulls = [{ state: "open", body, head: { sha: "a".repeat(40) } }];
+	const client = {
+		async createInstallationAccessToken() { return token; },
+		async listOpenPullRequests() { return pulls; },
+		async setChecklistStatus() {
+			writes++;
+			if (fail) throw new Error("GitHub timeout");
+		},
+	};
+	const initial = await handleChecklist(payload, env, client, async () => "jwt");
+	assert.equal(initial.response.status, 204);
+	assert.equal(writes, 0);
+	release("token");
+	await assert.rejects(initial.waitUntil, /GitHub timeout/);
+	assert.equal(writes, 1, "no automatic retries");
+	pulls = [];
+	const closed = await handleChecklist({ ...payload, action: "closed" }, env, client, async () => "jwt");
+	await closed.waitUntil;
+	assert.equal(writes, 1);
+	fail = false;
+	pulls = [{ state: "open", body, head: { sha: "a".repeat(40) } }];
+	const reopened = await handleChecklist({ ...payload, action: "reopened" }, env, client, async () => "jwt");
+	await reopened.waitUntil;
+	assert.equal(writes, 2);
+});
+
+test("all pages are read before publishing a shared-SHA status", async () => {
+	const pages = [];
+	const statuses = [];
+	const client = new GitHubClient(async (url, options) => {
+		if (url.includes("/pulls?")) {
+			const page = Number(new URL(url).searchParams.get("page"));
+			pages.push(page);
+			const pr = { state: "open", body, head: { sha: "a".repeat(40) } };
+			return Response.json(page === 1 ? Array.from({ length: 100 }, () => pr) : [{ ...pr, body: "unchecked" }]);
+		}
+		if (url.includes("/access_tokens")) return Response.json({ token: "token" });
+		statuses.push(JSON.parse(options.body));
+		return new Response(null, { status: 201 });
+	});
+	await reconcileChecklists({ repository, repositoryId: 2, installationId: 1 }, env, client, async () => "jwt");
+	assert.deepEqual(pages, [1, 2]);
+	assert.equal(statuses.length, 1);
+	assert.equal(statuses[0].state, "failure");
+});
 
 test("ignores unconfigured repositories and irrelevant actions; rejects bad signatures and IDs", async () => {
 	const client = new GitHubClient(() => assert.fail("unexpected API request"));

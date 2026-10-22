@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { bindings, defineConfig, exports } from "cf/config";
+import { bindings, defineConfig } from "cf/config";
 import * as entrypoint from "./src/index.mjs" with { type: "cf-worker" };
 
 export default defineConfig({
@@ -16,11 +16,7 @@ export default defineConfig({
 		observability: {
 			enabled: true,
 		},
-		exports: {
-			ChecklistJobs: exports.durableObject({ storage: "sqlite" }),
-		},
 		env: {
-			CHECKLIST_JOBS: bindings.durableObject({ worker: "kaito-tokyo-bot", exportName: "ChecklistJobs" }),
 			GITHUB_APP_ID: bindings.secret(),
 			GITHUB_CLIENT_ID: bindings.secret(),
 			GITHUB_PRIVATE_KEY: bindings.secret(),
