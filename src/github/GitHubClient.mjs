@@ -42,15 +42,21 @@ export class GitHubClient {
 		this.#fetch = _fetch.bind(globalThis);
 	}
 
-	/** Reads the current PR body and head, rather than replaying webhook state. */
-	async getPullRequest(repository, number, token) {
-		const response = await this.#fetch(`${this.#apiBase}/repos/${repository}/pulls/${number}`, {
-			redirect: "manual",
-			signal: AbortSignal.timeout(8000),
-			headers: { ...this.#headers, Authorization: `Bearer ${token}` },
-		});
-		if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
-		return response.json();
+	/** Fetches all open PRs, including other base branches sharing a head SHA. */
+	async listOpenPullRequests(repository, token) {
+		const pulls = [];
+		for (let page = 1; ; page++) {
+			const response = await this.#fetch(`${this.#apiBase}/repos/${repository}/pulls?state=open&per_page=100&sort=created&direction=asc&page=${page}`, {
+				redirect: "manual",
+				signal: AbortSignal.timeout(8000),
+				headers: { ...this.#headers, Authorization: `Bearer ${token}` },
+			});
+			if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
+			const batch = await response.json();
+			if (!Array.isArray(batch)) throw new Error("Invalid pull request list response");
+			pulls.push(...batch);
+			if (batch.length < 100) return pulls;
+		}
 	}
 
 	/** Publishes the mechanical checklist result as a commit status. */
@@ -63,7 +69,7 @@ export class GitHubClient {
 			body: JSON.stringify({
 				context: "checklist",
 				state: approved ? "success" : "failure",
-				description: approved ? "All required checklist lines are present." : "Required checklist lines are missing or unchecked.",
+				description: approved ? "All open PRs sharing this commit pass the checklist." : "An open PR sharing this commit has missing checklist lines.",
 			}),
 		});
 		if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
